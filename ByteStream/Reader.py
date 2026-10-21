@@ -2,57 +2,56 @@ from io import BufferedReader, BytesIO
 
 
 class Reader(BufferedReader):
+    MAX_VINT_BYTES = 5
+
     def __init__(self, initial_bytes, endian: str = 'big'):
         super().__init__(BytesIO(initial_bytes))
         self.buffer = initial_bytes
         self.endian = endian
-        self.i = 0
+
+    def _read_exact(self, length: int) -> bytes:
+        if length < 0:
+            raise ValueError("length must be non-negative")
+        data = self.read(length)
+        if len(data) != length:
+            raise EOFError(f"expected {length} bytes, got {len(data)}")
+        return data
+
+    def remaining(self) -> int:
+        return len(self.buffer) - self.tell()
 
     def readByte(self):
-        return int.from_bytes(self.read(1), "big")
+        return int.from_bytes(self._read_exact(1), "big")
 
     def readVInt(self):
         n = self._read_varint(True)
         return (n >> 1) ^ (-(n & 1))
-    
+
     def readIntList(self) -> list:
-        intList = []
         length = self.readVInt()
-        for x in range(length):
-            intList.append(self.readVInt())
-        
-        return intList
+        if length < 0:
+            raise ValueError("negative list length")
+        return [self.readVInt() for _ in range(length)]
 
     def readShort(self, length=2):
-        return int.from_bytes(self.read(length), "big")
+        return int.from_bytes(self._read_exact(length), "big")
 
     def readInt(self, length=4):
-        return int.from_bytes(self.read(length), "big")
+        return int.from_bytes(self._read_exact(length), "big")
 
     def readLong(self):
-        return self.readInt(8) # 2 Ints, better implementation soon :)
-    
+        return self.readInt(8)
+
     def readUInt8(self) -> int:
         return self.readUInteger()
 
     def readUInteger(self, length: int = 1) -> int:
-        result = 0
-        for x in range(length):
-            byte = self.buffer[self.i]
-
-            bit_padding = x * 8
-            if self.endian == 'big':
-                bit_padding = (8 * (length - 1)) - bit_padding
-
-            result |= byte << bit_padding
-            self.i += 1
-
-        return result
+        return int.from_bytes(self._read_exact(length), self.endian, signed=False)
 
     def _read_varint(self, rotate: bool = True):
         result = 0
         shift = 0
-        while True:
+        for _ in range(self.MAX_VINT_BYTES):
             byte = self.readByte()
             if rotate and shift == 0:
                 seventh = (byte & 0x40) >> 6
@@ -61,40 +60,33 @@ class Reader(BufferedReader):
                 n = n & ~0x181
                 byte = n | (msb << 7) | seventh
             result |= (byte & 0x7f) << shift
-            shift += 7
             if not (byte & 0x80):
-                break
-        return result
-
+                return result
+            shift += 7
+        raise ValueError("VInt is too long")
 
     def readBool(self) -> bool:
-        if self.readUInt8() >= 1:
-            return True
-        else:
-            return False
+        return self.readUInt8() >= 1
 
     def readDataReference(self):
         a = self.readVInt()
         if a > 0:
-            b = self.readVInt()
-        else:
-            return [a, 0]
-        return a, b
+            return a, self.readVInt()
+        return [a, 0]
 
     def readString(self):
         length = self.readInt()
         if length == pow(2, 32) - 1:
             return ""
-        else:
-            try:
-                decoded = self.read(length)
-            except MemoryError:
-                raise IndexError("String length too high/out of range!")
-            else:
-                return decoded.decode('utf-8')
+        if length > self.remaining():
+            raise EOFError(f"string length {length} exceeds remaining payload {self.remaining()}")
+        return self._read_exact(length).decode('utf-8')
 
     def peekInt(self, length=4):
-        return int.from_bytes(self.peek(length)[:length], "big")
+        data = self.peek(length)[:length]
+        if len(data) != length:
+            raise EOFError(f"expected {length} bytes to peek, got {len(data)}")
+        return int.from_bytes(data, "big")
 
     def readLogicLong(self):
         x = self.readVInt()
