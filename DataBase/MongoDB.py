@@ -3,26 +3,27 @@ import pymongo
 import datetime
 from DataBase.MongoUtils import MongoUtils
 from Logic.Player import Player
-import json
-import bson
 from Utils.Helpers import Helpers
 
 
 class MongoDB:
     def __init__(self, conn_str):
         self.player = Player
-        self.client = pymongo.MongoClient(conn_str, serverSelectionTimeoutMS = 5000)
+        self.client = pymongo.MongoClient(conn_str, serverSelectionTimeoutMS=5000)
         try:
             print(f"{Helpers.cyan}[DEBUG] Connecting to Mongo DataBase...")
             self.client.server_info()
         except Exception as e:
             print(f"{Helpers.red}[ERROR] Unable to connect to Mongo server! Error: {e}")
-            sys.exit()
+            sys.exit(1)
 
         self.database = self.client['Classic-Brawl']
         self.players = self.database['Players']
         self.clubs = self.database['Clubs']
         self.mongo_utils = MongoUtils()
+        self.players.create_index('ID', unique=True)
+        self.players.create_index('Token', unique=True)
+        self.clubs.create_index('ID', unique=True)
 
         self.data = {
             'Name': 'Guest',
@@ -70,112 +71,63 @@ class MongoDB:
             'Messages': []
         }
 
-    def merge(self, dict1, dict2):
-        return (dict1.update(dict2))
-
-
     def create_player_account(self, id, token):
-        auth = {
-            'ID': id,
-            'Token': token,
-        }
-
+        auth = {'ID': id, 'Token': token}
         auth.update(self.data)
-
         self.mongo_utils.insert_data(self.players, auth)
 
-
     def load_player_account(self, id, token):
-        query = {"Token": token}
-        result = self.mongo_utils.load_document(self.players, query)
-
+        result = self.mongo_utils.load_document(self.players, {'ID': id, 'Token': token})
         if result:
-            for x in self.data:
-                if x not in result:
-                    self.update_player_account(token, x, self.data[x])
-
-            query = {"Token": token}
-            result = self.mongo_utils.load_document(self.players, query)
-
-            return result
-
+            for key, value in self.data.items():
+                if key not in result:
+                    self.update_player_account(token, key, value)
+            return self.mongo_utils.load_document(self.players, {'ID': id, 'Token': token})
+        return None
 
     def load_player_account_by_id(self, id):
-        query = {"ID": id}
-        result = self.mongo_utils.load_document(self.players, query)
-
-        if result:
-            return result
-
+        return self.mongo_utils.load_document(self.players, {'ID': id})
 
     def update_player_account(self, token, item, value):
-        query = {"Token": token}
-        self.mongo_utils.update_document(self.players, query, item, value)
-
+        self.mongo_utils.update_document(self.players, {'Token': token}, item, value)
 
     def update_all_players(self, query, item, value):
         self.mongo_utils.update_all_documents(self.players, query, item, value)
 
-
     def delete_all_players(self, args):
         self.mongo_utils.delete_all_documents(self.players, args)
 
-
     def delete_player(self, token):
-        query = {"Token": token}
-        self.mongo_utils.delete_document(self.players, query)
-
+        self.mongo_utils.delete_document(self.players, {'Token': token})
 
     def load_all_players(self, args):
-        result = self.mongo_utils.load_all_documents(self.players, args)
-
-        return result
-
+        return self.mongo_utils.load_all_documents(self.players, args)
 
     def load_all_players_sorted(self, args, element, element2: str = None):
         return self.mongo_utils.load_all_documents_sorted(self.players, args, element, element2)
 
-
     def create_club(self, id, data):
-        auth = {
-            'ID': id,
-        }
-
+        auth = {'ID': id}
         auth.update(data)
-
         self.mongo_utils.insert_data(self.clubs, auth)
 
-
     def update_club(self, id, item, value):
-        query = {"ID": id}
-        self.mongo_utils.update_document(self.clubs, query, item, value)
-
+        self.mongo_utils.update_document(self.clubs, {'ID': id}, item, value)
 
     def load_club(self, id):
-        query = {"ID": id}
-        result = self.mongo_utils.load_document(self.clubs, query)
-
+        result = self.mongo_utils.load_document(self.clubs, {'ID': id})
         if result:
-            for x in self.club_data:
-                if x not in result:
-                    self.update_club(id, x, self.club_data[x])
-
-            query = {"ID": id}
-            result = self.mongo_utils.load_document(self.clubs, query)
-
-            return result
-
+            for key, value in self.club_data.items():
+                if key not in result:
+                    self.update_club(id, key, value)
+            return self.mongo_utils.load_document(self.clubs, {'ID': id})
+        return None
 
     def load_all_clubs_sorted(self, args, element):
-        result = self.mongo_utils.load_all_documents_sorted(self.clubs, args, element, None)
-
-        return result
+        return self.mongo_utils.load_all_documents_sorted(self.clubs, args, element, None)
 
     def load_all_clubs(self, args):
-        result = self.mongo_utils.load_all_documents(self.clubs, args)
-
-        return result
+        return self.mongo_utils.load_all_documents(self.clubs, args)
 
     def delete_club(self, id):
-        query = {"ID": id}
-        self.mongo_utils.delete_document(self.clubs, query)
+        self.mongo_utils.delete_document(self.clubs, {'ID': id})
