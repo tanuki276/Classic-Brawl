@@ -1,13 +1,16 @@
 import zlib
 from Utils.Helpers import Helpers
 
+
 class Writer:
+    MAX_PACKET_SIZE = (1 << 24) - 1
+
     def __init__(self, client, endian: str = 'big'):
         self.client = client
         self.endian = endian
         self.buffer = b''
 
-    def writeInt(self, data, length = 4):
+    def writeInt(self, data, length=4):
         self.buffer += data.to_bytes(length, self.endian, signed=True)
 
     def writeUInteger(self, integer: int, length: int = 1):
@@ -35,64 +38,55 @@ class Writer:
         self.writeInt(data, 2)
 
     def writeBool(self, boolean: bool):
-        if boolean:
-            self.writeUInt8(1)
-        else:
-            self.writeUInt8(0)
+        self.writeUInt8(1 if boolean else 0)
 
     def writeBooleanTest(self, *args):
-        boolean: int = 0
-        i: int = 0
-        for value in args:
+        boolean = 0
+        for i, value in enumerate(args):
             if value:
                 boolean |= 1 << i
-            i += 1
         self.writeByte(boolean)
 
     def writeHexa(self, data):
         if data:
             if data.startswith('0x'):
                 data = data[2:]
-
             self.buffer += bytes.fromhex(''.join(data.split()).replace('-', ''))
 
-    def send(self):
+    def _build_packet(self):
         self.encode()
-        packet = self.buffer
-        self.buffer = self.id.to_bytes(2, 'big', signed=True)
-        self.writeInt(len(packet), 3)
-        if hasattr(self, 'version'):
-            self.writeInt16(self.version)
-        else:
-            self.writeInt16(0)
-        self.buffer += packet + b'\xff\xff\x00\x00\x00\x00\x00'
-        self.client.send(self.buffer)
-        print(f'{Helpers.yellow}[SERVER] PacketID: {self.id}, Name: {type(self).__name__}, Length: {len(self.buffer)}')
+        payload = self.buffer
+        if len(payload) > self.MAX_PACKET_SIZE:
+            raise ValueError(f'packet too large: {len(payload)} bytes')
 
+        self.buffer = self.id.to_bytes(2, 'big', signed=True)
+        self.writeInt(len(payload), 3)
+        self.writeInt16(getattr(self, 'version', 0))
+        self.buffer += payload + b'\xff\xff\x00\x00\x00\x00\x00'
+        return self.buffer
+
+    def send(self):
+        packet = self._build_packet()
+        self.client.sendall(packet)
+        print(f'{Helpers.yellow}[SERVER] PacketID: {self.id}, Name: {type(self).__name__}, Length: {len(packet)}')
 
     def sendByID(self, ID):
-        self.encode()
-        packet = self.buffer
-        self.buffer = self.id.to_bytes(2, 'big', signed=True)
-        self.writeInt(len(packet), 3)
-        if hasattr(self, 'version'):
-            self.writeInt16(self.version)
-        else:
-            self.writeInt16(0)
-        self.buffer += packet + b'\xff\xff\x00\x00\x00\x00\x00'
-        Helpers.connected_clients["Clients"][str(ID)]["SocketInfo"].send(self.buffer)
+        packet = self._build_packet()
+        target = Helpers.connected_clients['Clients'].get(str(ID))
+        if not target:
+            raise ConnectionError(f'client {ID} is not connected')
+        target['SocketInfo'].sendall(packet)
 
     def writeVInt(self, data, rotate: bool = True):
         final = b''
         if data == 0:
             self.writeByte(0)
         elif data < 0:
-            self.writeVInt((2147483648 * 2) + data) # by isaasoobarr
+            self.writeVInt((2147483648 * 2) + data)
         else:
             data = (data << 1) ^ (data >> 31)
             while data:
                 b = data & 0x7f
-
                 if data >= 0x80:
                     b |= 0x80
                 if rotate:
@@ -102,7 +96,6 @@ class Writer:
                     b >>= 1
                     b = b & ~0xC0
                     b = b | (msb << 7) | (lsb << 6)
-
                 final += b.to_bytes(1, 'big')
                 data >>= 7
         self.buffer += final
@@ -114,7 +107,6 @@ class Writer:
         else:
             self.writeVInt(0)
 
-
     def writeString(self, string: str = None):
         if string is None:
             self.writeInt(-1)
@@ -124,9 +116,9 @@ class Writer:
             self.buffer += encoded
 
     def writeCompressedString(self, string: str):
-        compressed: bytes = zlib.compress(string.encode("utf-8"))
+        compressed = zlib.compress(string.encode('utf-8'))
         self.writeInt(len(compressed) + 4)
-        self.buffer += len(string).to_bytes(4, "little") # little endian
+        self.buffer += len(string).to_bytes(4, 'little')
         self.buffer += compressed
 
     def writeStringShort(self, string: str = None):
@@ -159,4 +151,4 @@ class Writer:
         self.buffer += data
 
     writeBoolean = writeBool
-    writeInt32   = writeInt
+    writeInt32 = writeInt
